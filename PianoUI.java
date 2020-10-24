@@ -3,17 +3,22 @@ import java.awt.Color;
 import java.awt.event.KeyListener;import java.awt.event.KeyEvent;
 import java.awt.event.MouseListener;import java.awt.event.MouseEvent;import java.awt.event.MouseMotionListener;
 import javax.swing.JPanel;
-public class PianoUI extends JPanel {
+import java.util.HashSet;
+import java.util.function.BiConsumer;
+public class PianoUI extends JPanel implements KeyListener,MouseListener,MouseMotionListener {
 	private int minNote,maxNote;
 	private boolean autoExtend;
 	private boolean[] notesOn;
+	private int hovered = -1;
 	public double keyHeightRatio=.6,keyWidthRatio=.4;
 	public Color pressedColor = Color.RED;
+	private final HashSet<BiConsumer<MouseEvent,Integer>> mouseListeners;
 	public PianoUI(final int minNoteInclusive,final int maxNoteInclusive,final boolean autoExtendKeyboard) {
 		minNote = minNoteInclusive;
 		maxNote = maxNoteInclusive+1;
 		autoExtend = autoExtendKeyboard;
 		notesOn = new boolean[maxNote-minNote];
+		mouseListeners = new HashSet<>();
 	}
 	public boolean isAutoExtendKeyboard() {return autoExtend;}//todo: implement autoextend
 	public void setAutoExtendKeyboard(final boolean autoExtendKeyboard) {autoExtend = autoExtendKeyboard;}
@@ -121,6 +126,36 @@ public class PianoUI extends JPanel {
 				return true;
 			default:
 				return false;
+		}
+	}
+	//KeyListener
+	public void keyPressed(final KeyEvent ke) {}
+	public void keyReleased(final KeyEvent ke) {}
+	public void keyTyped(final KeyEvent ke) {}
+	//MouseListener
+	public void mouseEntered(final MouseEvent me) {}
+	public void mouseExited(final MouseEvent me) {}
+	public void mousePressed(final MouseEvent me) {doMouse(me);}
+	public void mouseReleased(final MouseEvent me) {doMouse(me);}
+	public void mouseClicked(final MouseEvent me) {doMouse(me);}
+	//MouseMotionListener
+	public void mouseMoved(final MouseEvent me) {doMouse(me);}
+	public void mouseDragged(final MouseEvent me) {doMouse(me);}
+	//todo: actually make this compute the selected key
+	private void doMouse(final MouseEvent me) {
+		final int bigKeys = bigKeys(minNote,maxNote-1);
+		final boolean leastSmall = smallKey(minNote);
+		final boolean mostSmall = smallKey(maxNote-1);
+		final double bigW = getWidth()/(bigKeys+((leastSmall&&mostSmall)?keyWidthRatio:((leastSmall||mostSmall)?keyWidthRatio/2d:0)));
+		final double bigKeyX = (double)(me.getX()-(leastSmall?keyWidthRatio*bigW/2d:0))/getWidth();
+		int note;
+		if (me.getY()>keyHeightRatio*getHeight()) {
+			note = (int)(bigKeyX);
+		}else {
+			note = (int)(bigKeyX);
+		}
+		for (final BiConsumer<MouseEvent,Integer> bc: mouseListeners) {
+			bc.accept(me,note);
 		}
 	}
 }
