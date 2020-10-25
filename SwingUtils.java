@@ -1,7 +1,7 @@
 import javax.swing.SwingUtilities;
 import java.awt.event.ActionListener;import java.awt.event.ActionEvent;
 import javax.swing.event.ChangeListener;import javax.swing.event.ChangeEvent;
-import java.awt.event.MouseListener;import java.awt.event.MouseEvent;
+import java.awt.event.MouseListener;import java.awt.event.MouseEvent;import java.awt.event.MouseMotionListener;
 import java.util.function.Consumer;
 public class SwingUtils {
 	public static ActionListener actionListener(final Consumer<ActionEvent> actionPerformed) {
@@ -35,6 +35,24 @@ public class SwingUtils {
 			public void mouseExited(final MouseEvent me){}
 			public void mousePressed(final MouseEvent me){mousePressed.accept(me);}
 			public void mouseReleased(final MouseEvent me){}
+		};
+	}
+	public static MouseMotionListener mouseMotionListener(final Consumer<MouseEvent> mouseMoved,final Consumer<MouseEvent> mouseDragged) {
+		return new MouseMotionListener(){
+			public void mouseMoved(final MouseEvent me){mouseMoved.accept(me);}
+			public void mouseDragged(final MouseEvent me){mouseDragged.accept(me);}
+		};
+	}
+	public static MouseMotionListener mouseMoveListener(final Consumer<MouseEvent> mouseMoved) {
+		return new MouseMotionListener(){
+			public void mouseMoved(final MouseEvent me){mouseMoved.accept(me);}
+			public void mouseDragged(final MouseEvent me){}
+		};
+	}
+	public static MouseMotionListener mouseDragListener(final Consumer<MouseEvent> mouseDragged) {
+		return new MouseMotionListener(){
+			public void mouseMoved(final MouseEvent me){}
+			public void mouseDragged(final MouseEvent me){mouseDragged.accept(me);}
 		};
 	}
 	public static void onEDT(final Runnable r) {

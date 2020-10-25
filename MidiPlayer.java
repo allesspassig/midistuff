@@ -1,11 +1,13 @@
-import javax.sound.midi.*;
-import javax.swing.SwingUtilities;
+import javax.sound.midi.*; import javax.swing.SwingUtilities;
 import javax.swing.JPanel;import javax.swing.JProgressBar;import javax.swing.JButton;
 import java.awt.GridLayout;
-import java.util.HashMap;
+import java.util.HashSet;
+import java.util.function.Consumer;
 class MidiPlayer extends JPanel {
 	private Sequence sequence;
 	private Receiver receiver;
+	private final HashSet<Consumer<MidiMessage>> realTimeMessageListeners;
+	private final HashSet<Consumer<Long>> realTimeScrubberListeners;
 
 	private final JProgressBar scrubber;
 	private final int maxScrubber = 9999;//your display is probably not this wide
@@ -21,10 +23,13 @@ class MidiPlayer extends JPanel {
 	private int currEventIdx;
 	private double ticksPerMillisecond,millisecondsPerTick;
 	private long sequenceTickLength,currentTick;
+	private boolean machineGenerated;
+	private final double ballsiness = .9;//suppose there is 1 second until you need to play the next note; then you wait (ballsiness) seconds to begin to check if you should play it (leave some leeway for latency)
 
 	public MidiPlayer() {this(null,null);}
 	public MidiPlayer(final Sequence sequence,final Receiver receiver) {
 		super(new GridLayout(1,0));
+		machineGenerated = false;
 		player = null;
 		restart = false;
 		currEventIdx = 0;
@@ -32,7 +37,10 @@ class MidiPlayer extends JPanel {
 		currentTick = 0;
 		setReceiver(receiver);
 		setSequence(sequence);
+		realTimeMessageListeners = new HashSet<>();
+		realTimeScrubberListeners = new HashSet<>();
 		pausePlay = new JButton(pausePlayPausedText);
+		pausePlay.setEnabled(false);
 		repeat = new JButton(repeatNoText);
 		scrubber = new JProgressBar(JProgressBar.HORIZONTAL,0,0);
 		scrubber.setMaximum(maxScrubber);
@@ -55,17 +63,37 @@ class MidiPlayer extends JPanel {
 			});
 		}));
 		scrubber.addChangeListener(SwingUtils.changeListener(ce->{
-			setCurrTick((long)(((double)scrubber.getValue()/maxScrubber)*sequenceTickLength));
+			if (!machineGenerated) {
+				setCurrTick((long)(((double)scrubber.getValue()/maxScrubber)*sequenceTickLength));
+			}else {
+				machineGenerated = false;
+			}
 		}));
 		scrubber.addMouseListener(SwingUtils.mousePressReleaseListener(me->{
 			restart = (player!=null);
 			if (restart) stop();
+			scrubber.setValue((int)(maxScrubber*((double)me.getX()/scrubber.getWidth())));
 		},me->{
 			if (restart) start();
+		}));
+		scrubber.addMouseMotionListener(SwingUtils.mouseDragListener(me->{
+			scrubber.setValue((int)(maxScrubber*((double)me.getX()/scrubber.getWidth())));
 		}));
 		add(repeat);
 		add(pausePlay);
 		add(scrubber);
+	}
+	public void addRealTimeMessageListener(final Consumer<MidiMessage> consumer) {
+		realTimeMessageListeners.add(consumer);
+	}
+	public void removeRealTimeMessageListener(final Consumer<MidiMessage> consumer) {
+		realTimeMessageListeners.remove(consumer);
+	}
+	public void addRealTimeScrubberListener(final Consumer<Long> consumer) {
+		realTimeScrubberListeners.add(consumer);
+	}
+	public void removeRealTimeScrubberListener(final Consumer<Long> consumer) {
+		realTimeScrubberListeners.remove(consumer);
 	}
 	public void setReceiver(final Receiver receiver) {
 		if (receiver!=null) {
@@ -76,26 +104,31 @@ class MidiPlayer extends JPanel {
 	//you should stop playing if this returns false
 	private boolean setCurrTick(final long tick) {
 		if (tick<0) {
-			currentTick = 0;
+			notifyRealTimeScrubberListeners(currentTick = 0);
 			return false;
 		}else if (tick>=sequenceTickLength) {
 			if (repeat.getText().equals(repeatYesText)) {
-				currentTick = tick%sequenceTickLength;
+				notifyRealTimeScrubberListeners(currentTick = tick%sequenceTickLength);
 				return true;
 			}else {
-				currentTick = sequenceTickLength-1;
+				notifyRealTimeScrubberListeners(currentTick = sequenceTickLength-1);
 				return false;
 			}
 		}else {
-			currentTick = tick;
+			notifyRealTimeScrubberListeners(currentTick = tick);
 			return true;
+		}
+	}
+	public void notifyRealTimeScrubberListeners(final long currentTick) {
+		for (final Consumer<Long> listener:realTimeScrubberListeners) {
+			listener.accept(currentTick);
 		}
 	}
 	public void setSequence(final Sequence sequence) {
 		if (sequence!=null) {
 			currEventIdx = 0;
 			sequenceTickLength = sequence.getTickLength();
-			//sequence.getMicrosecondLength()
+			/* this doesn't really work -- perhaps most midi files don't bother setting it right
 			final float divisionType = sequence.getDivisionType();
 			if (divisionType==Sequence.PPQ) {//todo: don't assume 1 beat per second
 				ticksPerMillisecond = sequence.getResolution()/1000d;
@@ -116,19 +149,27 @@ class MidiPlayer extends JPanel {
 				ticksPerMillisecond = 1;
 				millisecondsPerTick = 1;
 			}
-			ticksPerMillisecond *= 3d;
-			millisecondsPerTick /= 3d;
+			*/
+			ticksPerMillisecond = (double)sequenceTickLength/(sequence.getMicrosecondLength()/1000d);
+			millisecondsPerTick = (sequence.getMicrosecondLength()/1000d)/(double)sequenceTickLength;
 			scrubber.setValue(0);
+			machineGenerated = true;
 			allEvents = loadTrackEvents(sequence.getTracks());
+			pausePlay.setEnabled(true);
 		}
+	}
+	//don't modify these unless you want to modify the song that is currently playing
+	public MidiEvent[] getEvents() {
+		return allEvents;
+	}
+	public double secondsToTicks(final double seconds) {
+		return seconds*1000d*ticksPerMillisecond;
 	}
 	private MidiEvent[] loadTrackEvents(final Track[] tracks) {
 		int nEvents = 0;
 		final int nTracks = tracks.length;
-		for (int i=0;i<nTracks;++i) {
+		for (int i=0;i<nTracks;++i)
 			nEvents += tracks[i].size();
-			//System.out.println(nEvents);
-		}
 		final MidiEvent[] out = new MidiEvent[nEvents];
 		final int[] trackIndicies = new int[nTracks];
 		for (int j=0;j<nEvents;++j) {
@@ -143,13 +184,16 @@ class MidiPlayer extends JPanel {
 					}
 				}
 			}
-			//System.out.println(nTracks+", "+minNextTickTrack+", "+tracks[minNextTickTrack].size()+", "+trackIndicies[minNextTickTrack]);
 			out[j] = tracks[minNextTickTrack].get(trackIndicies[minNextTickTrack]++);
 		}
 		return out;
 	}
 	public void start() {
 		pausePlay.setText(pausePlayPlayingText);
+		if (allEvents==null) {
+			stop();
+			return;
+		}
 		if (player!=null) {
 			player.interrupt();
 			try {
@@ -169,12 +213,19 @@ class MidiPlayer extends JPanel {
 					break;
 				}
 			}
-			while (!Thread.interrupted()&&setCurrTick(startTick+(long)((System.currentTimeMillis()-startTime)*ticksPerMillisecond))) {
+			while (player!=null&&!Thread.interrupted()&&setCurrTick(startTick+(long)((System.currentTimeMillis()-startTime)*ticksPerMillisecond))) {
 				startTick = startTick % sequenceTickLength;
-				for (;allEvents[currEventIdx].getTick()<currentTick;++currEventIdx) {
-					receiver.send(allEvents[currEventIdx].getMessage(),-1);
+				for (;currEventIdx<allEvents.length&&allEvents[currEventIdx].getTick()<=currentTick;++currEventIdx) {
+					final MidiMessage mm = allEvents[currEventIdx].getMessage();
+					receiver.send(mm,-1);
+					for (final Consumer<MidiMessage> consumer: realTimeMessageListeners)
+						consumer.accept(mm);
 				}
-				//try {Thread.sleep(3);}catch(final InterruptedException ie){}
+				machineGenerated = true;
+				scrubber.setValue((int)(maxScrubber*((double)currentTick/sequenceTickLength)));
+				try {
+					Thread.sleep((long)(ballsiness*(allEvents[currEventIdx].getTick()-currentTick)*millisecondsPerTick));
+				}catch(final InterruptedException ie) {}
 			}
 			pausePlay.setText(pausePlayPausedText);
 		});
@@ -191,3 +242,4 @@ class MidiPlayer extends JPanel {
 		}
 	}
 }
+

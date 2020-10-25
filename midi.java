@@ -9,11 +9,18 @@ public class midi {
 	public static void main(final String[] args) {
 		final JFrame w = new JFrame();
 		final JPanel leftPanel = new JPanel(new GridLayout(0,1));
+		final JPanel bottomPanel = new JPanel(new GridLayout(0,1));
 		final JButton loadMidiFileButton = new JButton("Load file");
 		final MidiPlayer player = new MidiPlayer();
+		final SheetMusicPanel sheetMusic = new SheetMusicPanel();
+		bottomPanel.add(sheetMusic);
+		bottomPanel.add(player);
 		if (args.length>0) {
 			try {
 				player.setSequence(MidiSystem.getSequence(new File(args[0])));
+				sheetMusic.removeAllNotes();
+				sheetMusic.addNotes(player.getEvents());
+				sheetMusic.setWindow((long)player.secondsToTicks(10),(long)player.secondsToTicks(10));
 			}catch(final InvalidMidiDataException imde) {
 				System.err.println("invalid midi data when reading from command line args");
 				imde.printStackTrace();
@@ -30,6 +37,9 @@ public class midi {
 				final File file = jfc.getSelectedFile();
 				try {
 					player.setSequence(MidiSystem.getSequence(file));
+					sheetMusic.removeAllNotes();
+					sheetMusic.addNotes(player.getEvents());
+					sheetMusic.setWindow((long)player.secondsToTicks(10),(long)player.secondsToTicks(10));
 				}catch(final InvalidMidiDataException imde) {
 					System.err.println("invalid midi data when reading from ui chosen file");
 					imde.printStackTrace();
@@ -55,52 +65,57 @@ public class midi {
 		final Transmitter tr = MidiUtil.firstTransmitterExcept("gervill","real time sequencer");
 		final Receiver rec = MidiUtil.firstReceiverExcept("gervill","real time sequencer");
 		player.setReceiver(rec);
+		final Consumer<MidiMessage> reactToMM = message->{
+			if (message instanceof ShortMessage) {
+				if (((ShortMessage)message).getCommand()==ShortMessage.NOTE_ON&&((ShortMessage)message).getData2()==0) {
+					try {
+						message = new ShortMessage(ShortMessage.NOTE_OFF,((ShortMessage)message).getChannel(),((ShortMessage)message).getData1(),((ShortMessage)message).getData2());
+					}catch(final InvalidMidiDataException imde) {}
+				}
+				final ShortMessage sm = (ShortMessage)message;
+				SwingUtilities.invokeLater(()->{
+					if (sm.getCommand()==ShortMessage.NOTE_ON)
+						piano.noteOn(sm.getData1());
+					else if (sm.getCommand()==ShortMessage.NOTE_OFF)
+						piano.noteOff(sm.getData1());
+					piano.repaint();
+				});
+				if (messagesShortCheckBox.isSelected()) {
+					messagesTextArea.insert(MidiUtil.shortMessageCommand(sm)+":("+sm.getData1()+","+sm.getData2()+")\n",0);
+				}
+			}else if (message instanceof MetaMessage) {
+				final MetaMessage mm = (MetaMessage)message;
+				if (messagesMetaCheckBox.isSelected()) {
+					final StringBuilder sb = new StringBuilder();
+					sb.append(MidiUtil.metaMessageType(mm)+", ");
+					for(final byte b:mm.getData())
+						sb.append(String.format("%02X ",b));
+					sb.append("\n");
+					messagesTextArea.insert(sb.toString(),0);
+				}
+			}else if (message instanceof SysexMessage) {
+				final SysexMessage sm = (SysexMessage)message;
+				if (messagesSysexCheckBox.isSelected()) {
+					final StringBuilder sb = new StringBuilder();
+					sb.append("Sysex, ");
+					for(final byte b:sm.getData())
+						sb.append(String.format("%02X ",b));
+					sb.append("\n");
+					messagesTextArea.insert(sb.toString(),0);
+				}
+			}
+		};
+		player.addRealTimeMessageListener(reactToMM);
+		player.addRealTimeScrubberListener(t->{sheetMusic.setCurrTick(t);sheetMusic.repaint();});
 		tr.setReceiver(new Receiver(){
 			public void send(MidiMessage message,final long t) {
-				if (message instanceof ShortMessage) {
-					if (((ShortMessage)message).getCommand()==ShortMessage.NOTE_ON&&((ShortMessage)message).getData2()==0) {
-						try {
-							message = new ShortMessage(ShortMessage.NOTE_OFF,((ShortMessage)message).getChannel(),((ShortMessage)message).getData1(),((ShortMessage)message).getData2());
-						}catch(final InvalidMidiDataException imde) {}
-					}
-					final ShortMessage sm = (ShortMessage)message;
-					SwingUtilities.invokeLater(()->{
-						if (sm.getCommand()==ShortMessage.NOTE_ON)
-							piano.noteOn(sm.getData1());
-						else if (sm.getCommand()==ShortMessage.NOTE_OFF)
-							piano.noteOff(sm.getData1());
-						piano.repaint();
-					});
-					if (messagesShortCheckBox.isSelected()) {
-						messagesTextArea.insert(MidiUtil.shortMessageCommand(sm)+":("+sm.getData1()+","+sm.getData2()+")\n",0);
-					}
-				}else if (message instanceof MetaMessage) {
-					final MetaMessage mm = (MetaMessage)message;
-					if (messagesMetaCheckBox.isSelected()) {
-						final StringBuilder sb = new StringBuilder();
-						sb.append(MidiUtil.metaMessageType(mm)+", ");
-						for(final byte b:mm.getData())
-							sb.append(String.format("%02X ",b));
-						sb.append("\n");
-						messagesTextArea.insert(sb.toString(),0);
-					}
-				}else if (message instanceof SysexMessage) {
-					final SysexMessage sm = (SysexMessage)message;
-					if (messagesSysexCheckBox.isSelected()) {
-						final StringBuilder sb = new StringBuilder();
-						sb.append("Sysex, ");
-						for(final byte b:sm.getData())
-							sb.append(String.format("%02X ",b));
-						sb.append("\n");
-						messagesTextArea.insert(sb.toString(),0);
-					}
-				}
+				reactToMM.accept(message);
 			}
 			public void close() {}
 		});
 		w.add(leftPanel,BorderLayout.WEST);
 		w.add(piano,BorderLayout.CENTER);
-		w.add(player,BorderLayout.SOUTH);
+		w.add(bottomPanel,BorderLayout.SOUTH);
 		w.pack();
 		w.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 		w.setVisible(true);

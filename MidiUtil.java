@@ -1,5 +1,6 @@
 import javax.sound.midi.*;
 import java.util.function.*;
+import java.util.Optional;
 class MidiUtil {
 	public static String metaMessageType(final MetaMessage mm) {return metaMessageType(mm.getType());}
 	public static String metaMessageType(final int type) {
@@ -22,6 +23,21 @@ class MidiUtil {
 			case 89:return "Key signature";
 			case 127:return "Sequencer specific";
 			default:return "??";
+		}
+	}
+	public static Optional<Byte> messageNote(final MidiMessage mm) {
+		final Byte b = null;
+		if (mm instanceof ShortMessage) {
+			final ShortMessage sm = (ShortMessage)mm;
+			switch(sm.getCommand()) {
+				case ShortMessage.NOTE_ON:
+				case ShortMessage.NOTE_OFF:
+					return Optional.of((byte)sm.getData1());
+				default:
+					return Optional.ofNullable(b);
+			}
+		}else {
+			return Optional.ofNullable(b);
 		}
 	}
 	public static String shortMessageCommand(final ShortMessage sm) {return shortMessageCommand(sm.getCommand());}
